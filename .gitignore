@@ -1,0 +1,27 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Test / tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editor folders
+.vscode/
+
+# Local databases and logs
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# Generated artifacts
+hls_projects/
+reports/
+models/digital_uploads/
+
+# OS files
+.DS_Store
+Thumbs.db
