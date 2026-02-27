@@ -1,0 +1,17 @@
+{
+  "nom": "IRF540N",
+  "type": "mosfet_n",
+  "description": "N-Channel Power MOSFET 100V 33A",
+  "parametres": {
+    "VTO": 3.6,
+    "KP": 11.7,
+    "LAMBDA": 0.02,
+    "RS": 0.005,
+    "RD": 0.005,
+    "CGS": 1.7e-9,
+    "CGD": 0.12e-9,
+    "IS": 1e-14,
+    "N": 1.0,
+    "EG": 1.11
+  }
+}

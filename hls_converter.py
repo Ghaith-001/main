@@ -1,0 +1,477 @@
+"""
+CONVERSION HLS4ML — hls_converter.py
+
+Mode 1 (hls4ml installé) : génère un vrai projet HLS dans hls_projects/{composant}/
+  Structure générée:
+    hls_projects/{composant}/
+    ├── firmware/
+    │   ├── parameters.h        ← types ap_fixed<16,6>, tailles couches
+    │   ├── weights/            ← poids .dat au format HLS
+    │   ├── myproject.cpp       ← implémentation accélérateur C++
+    │   └── myproject.h
+    ├── build_prj.tcl           ← script Vivado HLS
+    ├── tb_data/
+    │   ├── tb_input_features.dat
+    │   └── tb_output_predictions.dat
+    └── hls4ml_config.yml       ← configuration hls4ml
+
+Mode 2 (fallback, sans Vivado) : simule la quantification int8/float16
+  sur les poids Keras et mesure l'erreur de quantification.
+"""
+
+import json
+import os
+import sqlite3
+import numpy as np
+import joblib
+
+DB_PATH      = os.path.join(os.path.dirname(__file__), "composants_db.sqlite")
+MODELS_DIR   = os.path.join(os.path.dirname(__file__), "models")
+HLS_PROJ_DIR = os.path.join(os.path.dirname(__file__), "hls_projects")
+os.makedirs(HLS_PROJ_DIR, exist_ok=True)
+
+
+def _generer_projet_hls4ml(composant_nom: str, model, scaler_V, scaler_I,
+                           V_sim: np.ndarray, I_sim: np.ndarray) -> str:
+    """
+    Génère un vrai projet HLS via hls4ml.
+    Retourne le chemin du dossier projet créé.
+    Structure:
+      hls_projects/{composant}/
+      ├── firmware/
+      │   ├── parameters.h
+      │   ├── weights/
+      │   ├── myproject.cpp
+      │   └── myproject.h
+      ├── build_prj.tcl
+      ├── tb_data/
+      │   ├── tb_input_features.dat
+      │   └── tb_output_predictions.dat
+      └── hls4ml_config.yml
+    """
+    import hls4ml
+    import yaml
+
+    proj_dir = os.path.join(HLS_PROJ_DIR, composant_nom)
+    os.makedirs(proj_dir, exist_ok=True)
+
+    print(f"[HLS4ML] Génération projet dans: {proj_dir}")
+
+    # Configuration hls4ml
+    hls_config = hls4ml.utils.config_from_keras_model(model, granularity="name")
+    hls_config["Model"]["Precision"]    = "ap_fixed<16,6>"
+    hls_config["Model"]["ReuseFactor"]  = 1
+    hls_config["Model"]["Strategy"]     = "Latency"
+
+    # Sauvegarder la config YAML
+    config_path = os.path.join(proj_dir, "hls4ml_config.yml")
+    with open(config_path, "w") as f:
+        yaml.dump(hls_config, f, default_flow_style=False)
+
+    # Convertir le modèle Keras → projet HLS
+    hls_model = hls4ml.converters.convert_from_keras_model(
+        model,
+        hls_config=hls_config,
+        output_dir=proj_dir,
+        backend="Vivado",
+        project_name="myproject",
+        part="xc7a35tcpg236-1",   # Artix-7 (cible par défaut)
+        clock_period=10,
+        io_type="io_parallel",
+    )
+
+    # Compiler (C simulation, sans Vivado)
+    hls_model.compile()
+
+    # Générer les données de test tb_data/
+    tb_dir = os.path.join(proj_dir, "tb_data")
+    os.makedirs(tb_dir, exist_ok=True)
+
+    V_scaled = scaler_V.transform(V_sim.reshape(-1, 1))
+    np.savetxt(os.path.join(tb_dir, "tb_input_features.dat"),
+               V_scaled, fmt="%.6f", header="V_normalized")
+
+    I_hls_pred = hls_model.predict(V_scaled)
+    I_hls      = scaler_I.inverse_transform(I_hls_pred.reshape(-1, 1)).flatten()
+    np.savetxt(os.path.join(tb_dir, "tb_output_predictions.dat"),
+               I_hls, fmt="%.8e", header="I_hls (A)")
+
+    print(f"[HLS4ML] Projet généré: {proj_dir}")
+    print(f"[HLS4ML] Firmware C++ : {proj_dir}/firmware/")
+    print(f"[HLS4ML] Script TCL   : {proj_dir}/build_prj.tcl")
+    return proj_dir, I_hls
+
+
+def _generer_firmware_simule(composant_nom: str, model, scaler_V, scaler_I,
+                             V_sim: np.ndarray, quant_type: str = "int8") -> tuple:
+    """
+    Génère un projet HLS simulé (sans Vivado) avec les fichiers firmware
+    C++ synthétisés manuellement depuis les poids quantifiés.
+    Retourne (proj_dir, I_hls).
+    """
+    proj_dir  = os.path.join(HLS_PROJ_DIR, composant_nom)
+    firm_dir  = os.path.join(proj_dir, "firmware")
+    w_dir     = os.path.join(firm_dir, "weights")
+    tb_dir    = os.path.join(proj_dir, "tb_data")
+    os.makedirs(w_dir,  exist_ok=True)
+    os.makedirs(tb_dir, exist_ok=True)
+
+    print(f"[HLS-SIM] Génération firmware simulé dans: {proj_dir}")
+
+    # ── Quantifier les poids ──────────────────────────────────────────
+    model_q    = _quantifier_poids(model, quant_type)
+    V_scaled   = scaler_V.transform(V_sim.reshape(-1, 1))
+    I_q_scaled = model_q.predict(V_scaled, verbose=0)
+    I_hls      = scaler_I.inverse_transform(I_q_scaled).flatten()
+
+    # ── Générer parameters.h ──────────────────────────────────────────
+    layers      = [l for l in model.layers if l.get_weights()]
+    layer_sizes = []
+    for l in layers:
+        w = l.get_weights()[0]
+        layer_sizes.append(w.shape)
+
+    prec = "ap_int<8>" if quant_type == "int8" else "ap_fixed<16,6>"
+    params_h = f"""// Auto-generated by hls_converter.py — Quantization: {quant_type}
+// Composant: {composant_nom}
+#ifndef PARAMETERS_H_
+#define PARAMETERS_H_
+
+#include "ap_int.h"
+#include "ap_fixed.h"
+#include <complex>
+
+// Précision de quantification
+typedef {prec} weight_t;
+typedef ap_fixed<16,6> data_t;
+typedef ap_fixed<16,6> accum_t;
+typedef ap_fixed<16,6> result_t;
+
+// Architecture réseau
+#define N_INPUTS    1
+#define N_OUTPUTS   1
+"""
+    for i, sz in enumerate(layer_sizes):
+        params_h += f"#define N_LAYER_{i+1}_IN  {sz[0]}\n"
+        params_h += f"#define N_LAYER_{i+1}_OUT {sz[1]}\n"
+
+    params_h += "\n// Paramètres SPICE encodés\n"
+    params_h += f'#define COMPOSANT "{composant_nom}"\n'
+    params_h += "#endif\n"
+
+    with open(os.path.join(firm_dir, "parameters.h"), "w") as f:
+        f.write(params_h)
+
+    # ── Générer myproject.h ───────────────────────────────────────────
+    project_h = f"""// Auto-generated HLS header — {composant_nom}
+#ifndef MYPROJECT_H_
+#define MYPROJECT_H_
+
+#include "parameters.h"
+
+void myproject(data_t input[N_INPUTS], result_t output[N_OUTPUTS]);
+
+#endif
+"""
+    with open(os.path.join(firm_dir, "myproject.h"), "w") as f:
+        f.write(project_h)
+
+    # ── Générer myproject.cpp ─────────────────────────────────────────
+    cpp_lines = [
+        f"// HLS C++ — {composant_nom} IV-curve approximator",
+        f"// Quantization: {quant_type}",
+        '#include "myproject.h"',
+        '#include "weights/weights.h"',
+        "",
+        "void myproject(data_t input[N_INPUTS], result_t output[N_OUTPUTS]) {",
+        "#pragma HLS PIPELINE II=1",
+        "#pragma HLS ARRAY_PARTITION variable=input complete",
+        "",
+    ]
+    for i, l in enumerate(layers):
+        sz = l.get_weights()[0].shape
+        cpp_lines += [
+            f"    // Layer {i+1}: Dense({sz[1]})",
+            f"    static data_t layer{i+1}_out[{sz[1]}];",
+            f"    #pragma HLS ARRAY_PARTITION variable=layer{i+1}_out complete",
+            f"    for (int j = 0; j < {sz[1]}; j++) {{",
+            f"        accum_t acc = bias{i+1}[j];",
+            f"        for (int k = 0; k < {sz[0]}; k++)",
+            f"            acc += weight{i+1}[k][j] * "
+            f"({'input[k]' if i == 0 else f'layer{i}_out[k]'});",
+            f"        layer{i+1}_out[j] = (j < {sz[1]-0}) ? "
+            f"(acc > 0 ? acc : (accum_t)0) : acc;  // ReLU sauf dernier",
+            "    }",
+            "",
+        ]
+    n_last = len(layers)
+    cpp_lines += [
+        f"    output[0] = layer{n_last}_out[0];",
+        "}",
+    ]
+    with open(os.path.join(firm_dir, "myproject.cpp"), "w") as f:
+        f.write("\n".join(cpp_lines))
+
+    # ── Sauvegarder les poids quantifiés en .dat ───────────────────────
+    weight_h_lines = [
+        f"// Weights — {composant_nom} — {quant_type}",
+        "#ifndef WEIGHTS_H_", "#define WEIGHTS_H_",
+        '#include "../parameters.h"', "",
+    ]
+    for i, l in enumerate(layers):
+        ws = l.get_weights()
+        W, b = ws[0], ws[1]
+
+        if quant_type == "int8":
+            w_max = max(np.max(np.abs(W)), 1e-8)
+            scale = 127.0 / w_max
+            W_q   = np.round(W * scale).astype(np.int8)
+            b_q   = np.round(b * scale).astype(np.int8)
+        else:
+            W_q = W.astype(np.float16)
+            b_q = b.astype(np.float16)
+
+        np.savetxt(os.path.join(w_dir, f"w{i+1}.dat"), W_q, fmt="%d" if quant_type == "int8" else "%.4f")
+        np.savetxt(os.path.join(w_dir, f"b{i+1}.dat"), b_q, fmt="%d" if quant_type == "int8" else "%.4f")
+
+        rows, cols = W_q.shape
+        dtype = "weight_t"
+        weight_h_lines.append(f"static {dtype} weight{i+1}[{rows}][{cols}] = {{")
+        for r in range(rows):
+            row_str = ", ".join(str(int(x)) if quant_type == "int8" else f"{x:.4f}" for x in W_q[r])
+            weight_h_lines.append(f"  {{{row_str}}},")
+        weight_h_lines.append("};")
+        bias_str = ", ".join(str(int(x)) if quant_type == "int8" else f"{x:.4f}" for x in b_q)
+        weight_h_lines.append(f"static {dtype} bias{i+1}[{len(b_q)}] = {{{bias_str}}};")
+        weight_h_lines.append("")
+
+    weight_h_lines.append("#endif")
+    with open(os.path.join(w_dir, "weights.h"), "w") as f:
+        f.write("\n".join(weight_h_lines))
+
+    # ── Script TCL Vivado HLS ─────────────────────────────────────────
+    tcl = f"""# Auto-generated Vivado HLS TCL script — {composant_nom}
+open_project {composant_nom}_prj
+set_top myproject
+add_files firmware/myproject.cpp
+add_files firmware/myproject.h
+add_files firmware/parameters.h
+add_files -tb tb_data/tb_input_features.dat
+add_files -tb tb_data/tb_output_predictions.dat
+open_solution solution1
+set_part {{xc7a35tcpg236-1}}
+create_clock -period 10 -name default
+csynth_design
+export_design -format ip_catalog
+exit
+"""
+    with open(os.path.join(proj_dir, "build_prj.tcl"), "w") as f:
+        f.write(tcl)
+
+    # ── Données de test tb_data/ ──────────────────────────────────────
+    np.savetxt(os.path.join(tb_dir, "tb_input_features.dat"),
+               V_scaled, fmt="%.6f", header="V_normalized")
+    np.savetxt(os.path.join(tb_dir, "tb_output_predictions.dat"),
+               I_hls, fmt="%.8e", header="I_hls (A)")
+
+    print(f"[HLS-SIM] Firmware  : {firm_dir}/")
+    print(f"[HLS-SIM] Poids     : {w_dir}/ ({len(layers)} couches)")
+    print(f"[HLS-SIM] Script TCL: {proj_dir}/build_prj.tcl")
+    print(f"[HLS-SIM] tb_data   : {tb_dir}/")
+    return proj_dir, I_hls
+
+
+def _quantifier_poids(model, quant_type: str = "int8"):
+    """
+    Quantifie les poids du modèle et retourne un modèle avec poids quantifiés.
+    quant_type: 'int8' ou 'float16'
+    """
+    import tensorflow as tf
+    from tensorflow import keras
+
+    # Récupérer la config du modèle
+    config = model.get_config()
+    new_model = keras.Sequential.from_config(config)
+    new_model.compile(optimizer="adam", loss="mse")
+
+    new_weights = []
+    for layer in model.layers:
+        layer_weights = layer.get_weights()
+        if not layer_weights:
+            new_weights.append(layer_weights)
+            continue
+
+        quantified = []
+        for w in layer_weights:
+            if quant_type == "int8":
+                # Quantification int8 : scale + arrondi + dequantification
+                w_max = np.max(np.abs(w))
+                if w_max == 0:
+                    quantified.append(w)
+                    continue
+                scale = 127.0 / w_max
+                w_q   = np.round(w * scale).astype(np.int8)
+                w_dq  = w_q.astype(np.float32) / scale
+                quantified.append(w_dq)
+
+            elif quant_type == "float16":
+                # Quantification float16 (troncature mantisse)
+                w_f16 = w.astype(np.float16)
+                quantified.append(w_f16.astype(np.float32))
+            else:
+                quantified.append(w)
+
+        new_weights.append(quantified)
+
+    # Appliquer les poids quantifiés
+    for layer, weights in zip(new_model.layers, new_weights):
+        if weights:
+            layer.set_weights(weights)
+
+    return new_model
+
+
+def convertir_hls(composant_nom: str,
+                  quant_type: str = "int8",
+                  force: bool = False) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Simule la conversion HLS par quantification des poids du modèle IA.
+
+    Args:
+        composant_nom: Nom du composant (ex: '1N4007')
+        quant_type:   Type de quantification ('int8' ou 'float16')
+        force:        Recalculer même si déjà fait
+
+    Returns:
+        (V_hls, I_hls) arrays numpy
+    """
+    import tensorflow as tf
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT id FROM composants WHERE nom = ?", (composant_nom,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        raise ValueError(f"Composant '{composant_nom}' introuvable.")
+    comp_id = row[0]
+
+    # Vérifier si déjà fait
+    if not force:
+        cursor.execute(
+            "SELECT V_hls_json, I_hls_json FROM modeles_hls "
+            "WHERE composant_id = ? AND quant_type = ? "
+            "ORDER BY created_at DESC LIMIT 1",
+            (comp_id, quant_type)
+        )
+        existing = cursor.fetchone()
+        if existing:
+            V_hls = np.array(json.loads(existing[0]))
+            I_hls = np.array(json.loads(existing[1]))
+            conn.close()
+            print(f"[HLS] Résultats '{composant_nom}' ({quant_type}) chargés.")
+            return V_hls, I_hls
+
+    # Charger la simulation (pour V_sweep et référence)
+    cursor.execute(
+        "SELECT V_json, I_json FROM simulations WHERE composant_id = ? "
+        "ORDER BY created_at DESC LIMIT 1",
+        (comp_id,)
+    )
+    sim = cursor.fetchone()
+    conn.close()
+
+    if not sim:
+        raise ValueError(f"Aucune simulation pour '{composant_nom}'.")
+
+    V_sim = np.array(json.loads(sim[0]))
+    I_sim = np.array(json.loads(sim[1]))
+
+    # Charger le modèle Keras
+    model_path = os.path.join(MODELS_DIR, f"{composant_nom}_model.keras")
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(
+            f"Modèle introuvable: {model_path}. Entraînez d'abord avec trainer.py."
+        )
+
+    print(f"[HLS] Chargement modèle: {model_path}")
+    model = tf.keras.models.load_model(model_path)
+
+    # Charger les scalers
+    scaler_V = joblib.load(os.path.join(MODELS_DIR, f"{composant_nom}_scaler_V.pkl"))
+    scaler_I = joblib.load(os.path.join(MODELS_DIR, f"{composant_nom}_scaler_I.pkl"))
+
+    # ── Tentative avec hls4ml réel, sinon firmware simulé ────────────
+    try:
+        import hls4ml  # noqa: F401
+        print(f"[HLS] hls4ml détecté — génération projet HLS réel...")
+        proj_dir, I_hls = _generer_projet_hls4ml(
+            composant_nom, model, scaler_V, scaler_I, V_sim, I_sim
+        )
+        print(f"[HLS] Projet HLS réel: {proj_dir}")
+    except ImportError:
+        print(f"[HLS] hls4ml absent → génération firmware simulé ({quant_type})...")
+        proj_dir, I_hls = _generer_firmware_simule(
+            composant_nom, model, scaler_V, scaler_I, V_sim, quant_type
+        )
+
+    V_hls = V_sim.copy()
+
+    # Métriques par rapport à la simulation
+    from metriques import toutes_metriques
+    m = toutes_metriques(I_sim, I_hls)
+    print(f"[HLS] ({quant_type}) MAE={m['MAE']:.4e} | "
+          f"E_rel={m['E_rel_%']:.2f}% | R²={m['R2']:.6f}")
+
+    # Sauvegarde en base
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "DELETE FROM modeles_hls WHERE composant_id = ? AND quant_type = ?",
+        (comp_id, quant_type)
+    )
+    cursor.execute("""
+        INSERT INTO modeles_hls
+            (composant_id, quant_type, V_hls_json, I_hls_json,
+             mae, rmse, erreur_max, erreur_rel)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        comp_id, quant_type,
+        json.dumps(V_hls.tolist()), json.dumps(I_hls.tolist()),
+        m["MAE"], m["RMSE"], m["E_max"], m["E_rel_%"]
+    ))
+    conn.commit()
+    conn.close()
+
+    return V_hls, I_hls
+
+
+def charger_hls(composant_nom: str, quant_type: str = "int8") -> tuple[np.ndarray, np.ndarray] | None:
+    """Charge les résultats HLS depuis la base."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM composants WHERE nom = ?", (composant_nom,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return None
+    cursor.execute(
+        "SELECT V_hls_json, I_hls_json FROM modeles_hls "
+        "WHERE composant_id = ? AND quant_type = ? "
+        "ORDER BY created_at DESC LIMIT 1",
+        (row[0], quant_type)
+    )
+    hls = cursor.fetchone()
+    conn.close()
+    if not hls:
+        return None
+    return np.array(json.loads(hls[0])), np.array(json.loads(hls[1]))
+
+
+if __name__ == "__main__":
+    import sys
+    nom   = sys.argv[1] if len(sys.argv) > 1 else "1N4007"
+    quant = sys.argv[2] if len(sys.argv) > 2 else "int8"
+    V, I  = convertir_hls(nom, quant_type=quant, force=True)
+    print(f"\nRésultats HLS ({quant}) pour {nom}: {len(V)} points")

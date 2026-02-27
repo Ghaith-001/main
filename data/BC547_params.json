@@ -1,0 +1,29 @@
+{
+  "nom": "BC547",
+  "type": "transistor_bjt",
+  "description": "NPN BJT small signal transistor",
+  "parametres": {
+    "IS": 1e-14,
+    "BF": 200,
+    "NF": 1.0,
+    "VAF": 100,
+    "IKF": 0.1,
+    "ISE": 1e-14,
+    "NE": 1.5,
+    "BR": 5,
+    "NR": 1.0,
+    "VAR": 30,
+    "IKR": 0.01,
+    "RC": 10,
+    "CJC": 4e-12,
+    "VJC": 0.75,
+    "MJC": 0.33,
+    "CJE": 10e-12,
+    "VJE": 0.75,
+    "MJE": 0.33,
+    "TF": 0.3e-9,
+    "TR": 6e-9,
+    "EG": 1.11,
+    "XTI": 3
+  }
+}

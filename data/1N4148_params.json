@@ -1,0 +1,21 @@
+{
+  "nom": "1N4148",
+  "type": "diode",
+  "description": "Fast switching diode",
+  "parametres": {
+    "IS": 2.52e-9,
+    "RS": 0.568,
+    "N": 1.752,
+    "BV": 100,
+    "IBV": 1e-8,
+    "CJO": 4e-12,
+    "VJ": 0.6,
+    "M": 0.333,
+    "FC": 0.5,
+    "TT": 6e-9,
+    "EG": 1.11,
+    "XTI": 3,
+    "KF": 0,
+    "AF": 1
+  }
+}

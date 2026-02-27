@@ -1,0 +1,27 @@
+{
+  "nom": "1N4007",
+  "type": "diode",
+  "description": "Rectifier diode 1000V 1A",
+  "parametres": {
+    "IS": 7.62767e-9,
+    "RS": 0.0341512,
+    "N": 1.80803,
+    "BV": 1000,
+    "IBV": 5e-8,
+    "CJO": 1e-11,
+    "VJ": 0.7,
+    "M": 0.5,
+    "FC": 0.5,
+    "TT": 1e-7,
+    "EG": 1.65743,
+    "XTI": 5,
+    "KF": 0,
+    "AF": 1
+  },
+  "equations": {
+    "courant_direct": "I = IS * (exp(V/(N*VT)) - 1), VT=0.02585",
+    "avec_rs": "V = I*RS + N*VT*ln(I/IS + 1)",
+    "capacite": "C = CJO / (1 - V/VJ)^M pour V < 0"
+  }
+}
+  
