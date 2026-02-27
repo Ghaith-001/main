@@ -37,6 +37,39 @@ def _base_payload(template_id: str, template_params: dict[str, Any]) -> dict[str
     return payload
 
 
+def _humanize_error(raw_message: str) -> str:
+    text = (raw_message or "").strip()
+    if not text:
+        return "Erreur EmailJS inconnue"
+
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        parsed = None
+
+    if isinstance(parsed, dict):
+        code = parsed.get("code")
+        message = str(parsed.get("text") or parsed.get("message") or text)
+
+        if str(code) == "1010":
+            return (
+                "Code 1010 EmailJS: identifiants invalides. "
+                "Vérifiez EMAILJS_PUBLIC_KEY, EMAILJS_SERVICE_ID et le TEMPLATE_ID utilisé."
+            )
+
+        if code is not None:
+            return f"Code {code} EmailJS: {message}"
+        return message
+
+    if "1010" in text:
+        return (
+            "Code 1010 EmailJS: identifiants invalides. "
+            "Vérifiez EMAILJS_PUBLIC_KEY, EMAILJS_SERVICE_ID et le TEMPLATE_ID utilisé."
+        )
+
+    return text
+
+
 def _send(payload: dict[str, Any]) -> tuple[bool, str]:
     data = json.dumps(payload).encode("utf-8")
     req = request.Request(
@@ -52,12 +85,12 @@ def _send(payload: dict[str, Any]) -> tuple[bool, str]:
             body = resp.read().decode("utf-8", errors="ignore")
             if status in (200, 201):
                 return True, body or "ok"
-            return False, body or f"HTTP {status}"
+            return False, _humanize_error(body or f"HTTP {status}")
     except error.HTTPError as http_err:
         body = http_err.read().decode("utf-8", errors="ignore")
-        return False, body or f"HTTPError {http_err.code}"
+        return False, _humanize_error(body or f"HTTPError {http_err.code}")
     except Exception as exc:
-        return False, str(exc)
+        return False, _humanize_error(str(exc))
 
 
 def send_contact_email(name: str, email: str, message: str, date: str) -> tuple[bool, str]:
