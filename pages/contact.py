@@ -90,6 +90,14 @@ footer { display: none !important; }
     border: none !important; color: #060A14 !important; font-weight: 800 !important;
 }
 hr { border-color:rgba(255,255,255,0.05) !important; }
+
+@media (max-width: 900px) {
+    .page-hero { padding: 2.6rem 0.8rem 1.6rem; }
+    .page-title { font-size: clamp(1.8rem, 10vw, 2.4rem); letter-spacing: -1px; }
+    .page-sub { font-size: 0.95em; }
+    .info-box { padding: 1rem; border-radius: 14px; }
+    .info-item { gap: 0.8rem; margin-bottom: 1rem; }
+}
 </style>
 """, unsafe_allow_html=True)
 

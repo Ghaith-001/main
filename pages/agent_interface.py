@@ -197,6 +197,37 @@ st.markdown("""
     .stMarkdown td {
         color: #9CA3AF !important; border: 1px solid rgba(255,255,255,0.05) !important;
     }
+
+    @media (max-width: 900px) {
+        .main-header {
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 0.7rem;
+            padding: 1rem;
+            margin-bottom: 1rem;
+        }
+        .main-header h2 { font-size: 1.2em; }
+        .chat-user {
+            margin: 0.6rem 0 0.2rem 0.8rem;
+            padding: 0.7rem 0.9rem;
+            font-size: 0.92em;
+        }
+        .chat-bot-header {
+            margin: 0.6rem 0.8rem 0 0;
+            padding: 0.45rem 0.9rem 0.35rem;
+            font-size: 0.75em;
+        }
+        .chat-bot-content {
+            margin: 0 0.8rem 0.4rem 0;
+            padding: 0.7rem 0.9rem;
+            font-size: 0.92em;
+        }
+        .cmd-suggestion {
+            font-size: 0.74em;
+            margin: 0.2rem;
+            padding: 0.32rem 0.55rem;
+        }
+    }
 </style>
 """, unsafe_allow_html=True)
 

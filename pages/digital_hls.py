@@ -68,6 +68,14 @@ st.markdown(
         font-weight:700;
         font-size:0.9em;
     }
+
+    @media (max-width: 900px) {
+        .page-hero { padding: 2.6rem 0.8rem 1.6rem; }
+        .hero-title { font-size: clamp(1.8rem, 10vw, 2.4rem); letter-spacing: -1px; }
+        .hero-sub { font-size: 0.95em; }
+        .section-card { padding: 1rem; border-radius: 14px; }
+        .kpi-chip { width: 100%; text-align: center; }
+    }
     </style>
     """,
     unsafe_allow_html=True,

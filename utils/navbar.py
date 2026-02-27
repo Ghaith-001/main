@@ -108,6 +108,59 @@ def render_navbar(active_page=None):
             background: #00E6A1 !important;
             transform: translateY(-2px);
         }}
+
+        @media (max-width: 900px) {{
+            .analoglab-navbar {{
+                flex-wrap: wrap;
+                gap: 0.7rem;
+                padding: 0.9rem 0.8rem;
+                margin: -1rem -1rem 1rem -1rem;
+            }}
+
+            .navbar-logo {{
+                font-size: 1.15em;
+                margin-right: 0.3rem;
+            }}
+
+            .navbar-links {{
+                order: 3;
+                width: 100%;
+                overflow-x: auto;
+                white-space: nowrap;
+                padding-bottom: 0.2rem;
+                scrollbar-width: thin;
+            }}
+
+            .navbar-link {{
+                font-size: 0.83em;
+                padding: 7px 10px;
+                flex: 0 0 auto;
+            }}
+
+            .navbar-spacer {{
+                display: none;
+            }}
+
+            .navbar-cta {{
+                font-size: 0.8em;
+                padding: 8px 12px;
+            }}
+
+            .block-container {{
+                padding-left: 0.7rem !important;
+                padding-right: 0.7rem !important;
+            }}
+
+            [data-testid="stHorizontalBlock"] {{
+                gap: 0.7rem !important;
+            }}
+
+            [data-testid="column"] {{
+                width: 100% !important;
+                flex: 1 1 100% !important;
+                min-width: 100% !important;
+            }}
+        }}
         </style>
 
         <div class="analoglab-navbar">

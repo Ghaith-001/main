@@ -289,6 +289,21 @@ footer { display: none !important; }
 }
 hr { border-color: rgba(255,255,255,0.05) !important; }
 [data-testid="stSidebar"] { display: none !important; }
+
+@media (max-width: 900px) {
+    .hero-section { min-height: auto; padding: 0 1rem; }
+    .hero-content { grid-template-columns: 1fr; gap: 1.5rem; padding: 2.5rem 0; }
+    .hero-title { font-size: clamp(2rem, 9vw, 2.8rem); }
+    .hero-desc { font-size: 0.95em; max-width: 100%; }
+    .metrics-row { grid-template-columns: 1fr; }
+    .stats-strip { flex-wrap: wrap; }
+    .stat-item { min-width: 50%; padding: 1.2rem 0.8rem; border-right: none; border-bottom: 1px solid rgba(255,255,255,0.04); }
+    .how-section { padding: 3rem 1rem; }
+    .steps-row { grid-template-columns: 1fr; margin-top: 2rem; }
+    .idea-cta-section { margin: 0 1rem 3rem; padding: 2rem 1.2rem; }
+    .cta-inner { grid-template-columns: 1fr; gap: 1rem; }
+    .page-footer { padding: 1.5rem 1rem; }
+}
 </style>
 """, unsafe_allow_html=True)
 
