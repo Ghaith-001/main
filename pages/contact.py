@@ -128,27 +128,33 @@ with col_form:
             elif not re.match(r"[^@]+@[^@]+\.[^@]+", email):
                 st.error("Email invalide.")
             else:
-                sent_at = datetime.now().strftime("%Y-%m-%d %H:%M")
-                conn = init_db()
-                c = conn.cursor()
-                c.execute("INSERT INTO messages (name, email, message, date) VALUES (?, ?, ?, ?)",
-                          (name, email, message, sent_at))
-                conn.commit()
-                conn.close()
+                try:
+                    sent_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+                    conn = init_db()
+                    c = conn.cursor()
+                    c.execute("INSERT INTO messages (name, email, message, date) VALUES (?, ?, ?, ?)",
+                              (name, email, message, sent_at))
+                    conn.commit()
+                    conn.close()
+                except Exception as exc:
+                    st.error(f"Impossible d'enregistrer le message: {exc}")
+                else:
+                    if is_emailjs_enabled():
+                        try:
+                            ok_mail, mail_msg = send_contact_email(
+                                name=name.strip(),
+                                email=email.strip(),
+                                message=message.strip(),
+                                date=sent_at,
+                            )
+                            if ok_mail:
+                                st.success("📧 Notification email envoyée (EmailJS).")
+                            else:
+                                st.warning(f"Message enregistré, mais EmailJS a échoué: {mail_msg}")
+                        except Exception as exc:
+                            st.warning(f"Message enregistré, mais EmailJS est mal configuré: {exc}")
 
-                if is_emailjs_enabled():
-                    ok_mail, mail_msg = send_contact_email(
-                        name=name.strip(),
-                        email=email.strip(),
-                        message=message.strip(),
-                        date=sent_at,
-                    )
-                    if ok_mail:
-                        st.success("📧 Notification email envoyée (EmailJS).")
-                    else:
-                        st.warning(f"Message enregistré, mais EmailJS a échoué: {mail_msg}")
-
-                st.success("🎉 Message envoyé ! On vous répond sous 24h.")
+                    st.success("🎉 Message envoyé ! On vous répond sous 24h.")
 
 with col_info:
     st.markdown("### 🏛️ Informations")

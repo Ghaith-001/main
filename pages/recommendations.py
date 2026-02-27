@@ -23,12 +23,31 @@ def get_conn():
     conn = sqlite3.connect(RECOMMENDATIONS_DB_PATH, check_same_thread=False)
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS recommendations (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
-        role TEXT NOT NULL, category TEXT NOT NULL DEFAULT 'Général',
-        content TEXT NOT NULL, rating INTEGER DEFAULT 5, votes INTEGER DEFAULT 0, date TEXT NOT NULL)''')
-    for col, default in [("category","'Général'"), ("rating","5"), ("votes","0")]:
-        try: c.execute(f"ALTER TABLE recommendations ADD COLUMN {col} TEXT DEFAULT {default}")
-        except: pass
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'Non précisé',
+        category TEXT NOT NULL DEFAULT 'Général',
+        content TEXT NOT NULL,
+        rating INTEGER DEFAULT 5,
+        votes INTEGER DEFAULT 0,
+        date TEXT NOT NULL DEFAULT ''
+    )''')
+
+    c.execute("PRAGMA table_info(recommendations)")
+    existing_columns = {row[1] for row in c.fetchall()}
+    required_columns = {
+        "name": "TEXT NOT NULL DEFAULT ''",
+        "role": "TEXT NOT NULL DEFAULT 'Non précisé'",
+        "category": "TEXT NOT NULL DEFAULT 'Général'",
+        "content": "TEXT NOT NULL DEFAULT ''",
+        "rating": "INTEGER DEFAULT 5",
+        "votes": "INTEGER DEFAULT 0",
+        "date": "TEXT NOT NULL DEFAULT ''",
+    }
+    for column_name, column_def in required_columns.items():
+        if column_name not in existing_columns:
+            c.execute(f"ALTER TABLE recommendations ADD COLUMN {column_name} {column_def}")
+
     conn.commit()
     return conn
 
@@ -160,29 +179,35 @@ with col_form:
         ok = st.form_submit_button("🚀 Soumettre", type="primary", use_container_width=True)
         if ok:
             if name and content:
-                submitted_at = datetime.now().strftime("%Y-%m-%d %H:%M")
-                role_value = role.strip() if role and role.strip() else "Non précisé"
-                c = conn.cursor()
-                c.execute("INSERT INTO recommendations (name,role,category,content,rating,votes,date) VALUES (?,?,?,?,?,?,?)",
-                          (name, role_value, category, content, rating, 0, submitted_at))
-                conn.commit()
+                try:
+                    submitted_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+                    role_value = role.strip() if role and role.strip() else "Non précisé"
+                    c = conn.cursor()
+                    c.execute("INSERT INTO recommendations (name,role,category,content,rating,votes,date) VALUES (?,?,?,?,?,?,?)",
+                              (name, role_value, category, content, rating, 0, submitted_at))
+                    conn.commit()
+                except Exception as exc:
+                    st.error(f"Impossible d'enregistrer l'idée: {exc}")
+                else:
+                    if is_emailjs_enabled():
+                        try:
+                            ok_mail, mail_msg = send_idea_email(
+                                name=name.strip(),
+                                role=role_value,
+                                category=category,
+                                content=content.strip(),
+                                rating=int(rating),
+                                date=submitted_at,
+                            )
+                            if ok_mail:
+                                st.success("📧 Notification idée envoyée (EmailJS).")
+                            else:
+                                st.warning(f"Idée enregistrée, mais EmailJS a échoué: {mail_msg}")
+                        except Exception as exc:
+                            st.warning(f"Idée enregistrée, mais EmailJS est mal configuré: {exc}")
 
-                if is_emailjs_enabled():
-                    ok_mail, mail_msg = send_idea_email(
-                        name=name.strip(),
-                        role=role_value,
-                        category=category,
-                        content=content.strip(),
-                        rating=int(rating),
-                        date=submitted_at,
-                    )
-                    if ok_mail:
-                        st.success("📧 Notification idée envoyée (EmailJS).")
-                    else:
-                        st.warning(f"Idée enregistrée, mais EmailJS a échoué: {mail_msg}")
-
-                st.success("🎉 Merci !")
-                st.rerun()
+                    st.success("🎉 Merci !")
+                    st.rerun()
             else:
                 st.error("Veuillez renseigner au minimum votre nom et votre idée.")
 
