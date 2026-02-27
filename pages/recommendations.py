@@ -8,6 +8,7 @@ from datetime import datetime
 import pandas as pd
 from utils.navbar import render_navbar
 from utils.storage_paths import get_recommendations_db_path
+from utils.emailjs_notifier import is_emailjs_enabled, send_idea_email
 
 RECOMMENDATIONS_DB_PATH = get_recommendations_db_path()
 
@@ -159,12 +160,31 @@ with col_form:
         ok = st.form_submit_button("🚀 Soumettre", type="primary", use_container_width=True)
         if ok:
             if name and content:
+                submitted_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+                role_value = role.strip() if role and role.strip() else "Non précisé"
                 c = conn.cursor()
                 c.execute("INSERT INTO recommendations (name,role,category,content,rating,votes,date) VALUES (?,?,?,?,?,?,?)",
-                          (name, role, category, content, rating, 0, datetime.now().strftime("%Y-%m-%d %H:%M")))
+                          (name, role_value, category, content, rating, 0, submitted_at))
                 conn.commit()
+
+                if is_emailjs_enabled():
+                    ok_mail, mail_msg = send_idea_email(
+                        name=name.strip(),
+                        role=role_value,
+                        category=category,
+                        content=content.strip(),
+                        rating=int(rating),
+                        date=submitted_at,
+                    )
+                    if ok_mail:
+                        st.success("📧 Notification idée envoyée (EmailJS).")
+                    else:
+                        st.warning(f"Idée enregistrée, mais EmailJS a échoué: {mail_msg}")
+
                 st.success("🎉 Merci !")
                 st.rerun()
+            else:
+                st.error("Veuillez renseigner au minimum votre nom et votre idée.")
 
 with col_list:
     st.markdown("### 💬 Suggestions récentes")

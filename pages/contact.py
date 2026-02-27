@@ -8,6 +8,7 @@ from datetime import datetime
 import re
 from utils.navbar import render_navbar
 from utils.storage_paths import get_contact_db_path
+from utils.emailjs_notifier import is_emailjs_enabled, send_contact_email
 
 CONTACT_DB_PATH = get_contact_db_path()
 
@@ -127,12 +128,26 @@ with col_form:
             elif not re.match(r"[^@]+@[^@]+\.[^@]+", email):
                 st.error("Email invalide.")
             else:
+                sent_at = datetime.now().strftime("%Y-%m-%d %H:%M")
                 conn = init_db()
                 c = conn.cursor()
                 c.execute("INSERT INTO messages (name, email, message, date) VALUES (?, ?, ?, ?)",
-                          (name, email, message, datetime.now().strftime("%Y-%m-%d %H:%M")))
+                          (name, email, message, sent_at))
                 conn.commit()
                 conn.close()
+
+                if is_emailjs_enabled():
+                    ok_mail, mail_msg = send_contact_email(
+                        name=name.strip(),
+                        email=email.strip(),
+                        message=message.strip(),
+                        date=sent_at,
+                    )
+                    if ok_mail:
+                        st.success("📧 Notification email envoyée (EmailJS).")
+                    else:
+                        st.warning(f"Message enregistré, mais EmailJS a échoué: {mail_msg}")
+
                 st.success("🎉 Message envoyé ! On vous répond sous 24h.")
 
 with col_info:
